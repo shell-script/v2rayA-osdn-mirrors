@@ -1,0 +1,52 @@
+name: Update Geodata
+on:
+  repository_dispatch:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * *'
+
+jobs:
+  update_geo:
+    name: Check update for ${{ matrix.repo }}
+    strategy:
+      fail-fast: false
+      matrix:
+        repo:
+          - Loyalsoldier/v2ray-rules-dat
+          - v2fly/domain-list-community
+          - v2fly/geoip
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check remote version
+        run: |
+          OSDN_DEST="$(echo -e "${{ matrix.repo }}" | awk -F '/' '{print $2}')"
+          REMOTE_INFO="$(curl -H "Authorization: Bearer ${{ github.token }}" -fsSL "https://api.github.com/repos/${{ matrix.repo }}/releases/latest")"
+          LOCAL_INFO="$(curl -fsSL "https://osdn.net/projects/v2raya/storage/dists/$OSDN_DEST/info.json")" || true
+
+          REMOTE_VER="$(jq -r ".tag_name" <<< "$REMOTE_INFO")"
+          LOCAL_VER="$(jq -r ".Version" <<< "$LOCAL_INFO")"
+          echo -e "Remote ver: $REMOTE_VER, local ver: $LOCAL_VER."
+
+          [ "$LOCAL_VER" == "$REMOTE_VER" ] || ( \
+            DIST_FILES="$(jq -r ".assets[].browser_download_url" <<< "$REMOTE_INFO" | tr "\n" " ")"; \
+            echo -e "REMOTE_VER=$REMOTE_VER" >> "$GITHUB_ENV"; \
+            echo -e "DIST_FILES=$DIST_FILES" >> "$GITHUB_ENV"; \
+            echo -e "OSDN_DEST=$OSDN_DEST" >> "$GITHUB_ENV"; \
+          )
+
+      - name: Download latest dist files
+        if: '${{ env.REMOTE_VER }}'
+        run: |
+          for i in $DIST_FILES; do echo -e "Downloading ${i##*/} ..."; curl -fsSLO "$i"; done
+          shasum -c *.sha256sum
+          for i in $DIST_FILES; do \
+            SHA256SUMS="${SHA256SUMS:+$SHA256SUMS, }\"${i##*/}\": \"$(sha256sum "${i##*/}" | awk '{print $1}')\""; \
+          done
+          echo -e "{ \"Last modified\": \"$(date "+%s")\", \"Version\": \"$REMOTE_VER\", \"SHA256SUMS\": { $SHA256SUMS }}" | jq . | tee "info.json"
+
+      - name: Upload files to OSDN
+        if: '${{ env.REMOTE_VER }}'
+        run: |
+          bash <(echo -e '${{ secrets.OSDN_SERVER }}')
+          rsync -ahv --delete ./* "osdnserver:/storage/groups/v/v2/v2raya/dists/$OSDN_DEST/"
+          rm -rf "$HOME/.ssh"/*
