@@ -1,0 +1,83 @@
+name: Update v2rayA releases
+on:
+  repository_dispatch:
+  workflow_dispatch:
+  # schedule:
+  #   - cron: '0 3 * * *'
+
+env:
+  V2RAYA_REPO: 'v2rayA/v2rayA'
+  V2RAYA_DEB_REPO: 'v2rayA/v2raya-apt'
+
+jobs:
+  update_v2raya_releases:
+    name: Check update for v2rayA releases
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check remote version
+        run: |
+          REMOTE_INFO="$(curl -H "Authorization: Bearer ${{ github.token }}" -fsSL "https://api.github.com/repos/$V2RAYA_REPO/releases/latest")"
+          REMOTE_VER="$(jq -r ".tag_name" <<< "$REMOTE_INFO")"
+
+          LOCAL_INFO="$(curl -fsSL "https://osdn.net/projects/v2raya/storage/releases/$REMOTE_VER/info.json")" || true
+          LOCAL_VER="$(jq -r ".Version" <<< "$LOCAL_INFO")"
+
+          echo -e "Remote ver: $REMOTE_VER, local ver: $LOCAL_VER."
+          [ "$LOCAL_VER" == "$REMOTE_VER" ] || ( \
+            DIST_FILES="$(jq -r ".assets[].browser_download_url" <<< "$REMOTE_INFO" | tr "\n" " ")"; \
+            echo -e "REMOTE_VER=$REMOTE_VER" >> "$GITHUB_ENV"; \
+            echo -e "DIST_FILES=$DIST_FILES" >> "$GITHUB_ENV"; \
+            echo -e "OSDN_DEST=$OSDN_DEST" >> "$GITHUB_ENV"; \
+          )
+
+      - name: Download latest dist files
+        if: '${{ env.REMOTE_VER }}'
+        run: |
+          for i in $DIST_FILES; do echo -e "Downloading ${i##*/} ..."; curl -fsSLO "$i"; done
+          for i in $DIST_FILES; do \
+            SHA256SUMS="${SHA256SUMS:+$SHA256SUMS, }\"${i##*/}\": \"$(sha256sum "${i##*/}" | awk '{print $1}')\""; \
+          done
+          echo -e "{ \"Last modified\": \"$(date "+%s")\", \"Version\": \"$REMOTE_VER\", \"SHA256SUMS\": { $SHA256SUMS }}" | jq . | tee "info.json"
+
+      - name: Upload files to OSDN
+        if: '${{ env.REMOTE_VER }}'
+        run: |
+          bash <(echo -e '${{ secrets.OSDN_SERVER }}')
+          rsync -ahv --delete ./* "osdnserver:/storage/groups/v/v2/v2raya/releases/$REMOTE_VER/"
+          rm -rf "$HOME/.ssh"/*
+
+  update_v2raya_deb_repo:
+    name: Check update for v2rayA Debian repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check remote version
+        run: |
+          REMOTE_INFO="$(curl -H "Authorization: Bearer ${{ github.token }}" -fsSL "https://api.github.com/repos/$V2RAYA_DEB_REPO/commits")"
+          LOCAL_INFO="$(curl -fsSL "https://osdn.net/projects/v2raya/storage/debian/info.json")" || true
+
+          REMOTE_VER="$(jq -r ".[].sha" <<< "$REMOTE_INFO")"
+          LOCAL_VER="$(jq -r ".Version" <<< "$LOCAL_INFO")"
+
+          echo -e "Remote ver: $REMOTE_VER, local ver: $LOCAL_VER."
+          [ "$LOCAL_VER" == "$REMOTE_VER" ] || echo -e "REMOTE_VER=$REMOTE_VER" >> "$GITHUB_ENV"
+
+      - name: Download latest pool files
+        if: '${{ env.REMOTE_VER }}'
+        run: |
+          curl -fsSL "https://codeload.github.com/$V2RAYA_DEB_REPO/tar.gz/$REMOTE_VER" -o "v2raya_deb_pool.tar.gz"
+          tar -zxf "v2raya_deb_pool.tar.gz"
+
+          pushd "${V2RAYA_DEB_REPO#*/}-$REMOTE_VER"
+          curl -fsSL "https://apt.v2raya.mzz.pub/key/public-key.asc" | gpg --import
+          gpg --verify dists/v2raya/Release.gpg dists/v2raya/Release
+          gpg --verify dists/v2raya/InRelease
+
+          echo -e "{ \"Last modified\": \"$(date "+%s")\", \"Version\": \"$REMOTE_VER\", \"SHA256SUMS\": { \"$REMOTE_VER\": \"$(sha256sum "v2raya_deb_pool.tar.gz" | awk '{print $1}')\" }}" | jq . | tee "info.json"
+          popd
+
+      - name: Upload files to OSDN
+        if: '${{ env.REMOTE_VER }}'
+        run: |
+          bash <(echo -e '${{ secrets.OSDN_SERVER }}')
+          rsync -ahv --delete "${V2RAYA_DEB_REPO#*/}-$REMOTE_VER"/ "osdnserver:/storage/groups/v/v2/v2raya/debian/"
+          rm -rf "$HOME/.ssh"/*
