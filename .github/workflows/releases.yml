@@ -55,7 +55,7 @@ jobs:
           REMOTE_INFO="$(curl -H "Authorization: Bearer ${{ github.token }}" -fsSL "https://api.github.com/repos/$V2RAYA_DEB_REPO/commits")"
           LOCAL_INFO="$(curl -fsSL "https://osdn.net/projects/v2raya/storage/debian/info.json")" || true
 
-          REMOTE_VER="$(jq -r ".[].sha" <<< "$REMOTE_INFO")"
+          REMOTE_VER="$(jq -r ".[0].sha" <<< "$REMOTE_INFO")"
           LOCAL_VER="$(jq -r ".Version" <<< "$LOCAL_INFO")"
 
           echo -e "Remote ver: $REMOTE_VER, local ver: $LOCAL_VER."
