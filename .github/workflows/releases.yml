@@ -68,7 +68,7 @@ jobs:
           tar -zxf "v2raya_deb_pool.tar.gz"
 
           pushd "${V2RAYA_DEB_REPO#*/}-$REMOTE_VER"
-          curl -fsSL "https://apt.v2raya.mzz.pub/key/public-key.asc" | gpg --import
+          curl -fsSL "https://apt.v2raya.org/key/public-key.asc" | gpg --import
           gpg --verify dists/v2raya/Release.gpg dists/v2raya/Release
           gpg --verify dists/v2raya/InRelease
 
